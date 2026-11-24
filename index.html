@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ParadeRoute Agent — Delivery routing for Macy's Thanksgiving Parade</title>
+<style>
+  :root{--red:#d9534f;--ink:#1d1d1f;--mute:#6b6b70;--line:#e6e6ea;--ok:#1f9d55;--warn:#e08a00;--bg:#fafafa}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;color:var(--ink);display:grid;grid-template-columns:400px 1fr;height:100vh;background:var(--bg)}
+  #side{overflow-y:auto;border-right:1px solid var(--line);background:#fff;display:flex;flex-direction:column}
+  header{padding:16px 18px 10px;border-bottom:1px solid var(--line)}
+  header h1{font-size:17px;margin:0 0 2px}
+  header p{margin:0;color:var(--mute);font-size:12.5px}
+  section{padding:12px 18px;border-bottom:1px solid var(--line)}
+  h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:0 0 8px}
+  .time{display:flex;align-items:center;gap:10px}
+  .time input{flex:1}
+  .clock{font-variant-numeric:tabular-nums;font-weight:700;font-size:20px;min-width:72px}
+  .status{font-size:12px;margin-top:6px;color:var(--mute)}
+  .stop{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px dashed var(--line);font-size:13px}
+  .stop:last-child{border-bottom:0}
+  .pin{width:22px;height:22px;border-radius:50%;background:var(--ink);color:#fff;font-size:11px;font-weight:700;display:grid;place-items:center;flex:none}
+  .pin.start{background:var(--ok)}
+  .stop small{color:var(--mute);display:block}
+  .x{margin-left:auto;cursor:pointer;color:var(--mute);border:0;background:none;font-size:14px}
+  button.primary{width:100%;padding:11px;border:0;border-radius:10px;background:var(--red);color:#fff;font-weight:700;font-size:14px;cursor:pointer}
+  button.primary:disabled{opacity:.5}
+  .hint{font-size:11.5px;color:var(--mute);margin-top:6px}
+  #log{font-size:12.5px;line-height:1.45}
+  .entry{padding:7px 9px;border-radius:8px;margin-bottom:6px;background:#f4f4f6}
+  .entry.warn{background:#fff4e0}
+  .entry.ok{background:#e9f7ef}
+  .entry.bad{background:#fdecea}
+  .entry b{font-weight:650}
+  .tag{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.05em;padding:1px 6px;border-radius:99px;background:var(--ink);color:#fff;margin-right:4px;vertical-align:1px}
+  .approve{display:flex;gap:6px;margin-top:6px}
+  .approve button{flex:1;padding:6px;border-radius:7px;border:1px solid var(--line);background:#fff;cursor:pointer;font-size:12px}
+  .approve button.yes{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .lens{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .lens div{border:1px solid var(--line);border-radius:10px;padding:8px;font-size:11.5px;line-height:1.35}
+  .lens b{color:var(--red);display:block;font-size:12px;margin-bottom:2px}
+  #map{height:100vh}
+  .legend{position:absolute;right:12px;bottom:24px;background:#fff;border-radius:10px;padding:8px 10px;font-size:12px;box-shadow:0 2px 10px rgba(0,0,0,.15)}
+  .legend span{display:inline-block;width:18px;height:4px;border-radius:2px;margin-right:6px;vertical-align:middle}
+  #err{display:none;position:absolute;left:50%;top:12px;transform:translateX(-50%);background:#fdecea;color:#8a1f1a;padding:8px 12px;border-radius:8px;font-size:12.5px;max-width:520px;box-shadow:0 2px 10px rgba(0,0,0,.1)}
+  .lens details{border:1px solid var(--line);border-radius:10px;padding:8px;font-size:11.5px;line-height:1.4}
+  .lens summary{cursor:pointer;list-style:none}
+  .lens summary::-webkit-details-marker{display:none}
+  .lens summary b{color:var(--red);font-size:12px}
+  .lens{grid-template-columns:1fr !important}
+</style>
+</head>
+<body>
+<div id="side">
+  <header>
+    <h1>🦃 ParadeRoute Agent</h1>
+    <p>Live rerouting for delivery drivers during the Macy's Thanksgiving Day Parade · Thu Nov 26</p>
+  </header>
+
+  <section>
+    <h2>Time of day</h2>
+    <div class="time">
+      <span class="clock" id="clock">9:30</span>
+      <input type="range" id="slider" min="300" max="900" step="15" value="570">
+    </div>
+    <div class="status" id="status"></div>
+  </section>
+
+  <section>
+    <h2>Gig driver run · <span id="count"></span></h2>
+    <div id="stops"></div>
+    <div class="hint">Click the map to add a drop-off. Start = driver's current location.</div>
+  </section>
+
+  <section>
+    <label style="font-size:12.5px;display:flex;gap:6px;align-items:center;margin-bottom:8px"><input type="checkbox" id="reorder" checked> Let the agent suggest a parade-aware stop order</label>
+    <button class="primary" id="run">▶ Plan my run</button>
+    <button class="primary" id="offerBtn" style="background:var(--ink);margin-top:8px">📲 Simulate incoming order offer</button>
+    <div style="font-size:12px;margin-top:8px;display:flex;align-items:center;gap:6px">My target: $<input id="target" type="number" value="25" style="width:52px"> /hr</div>
+  </section>
+
+  <section style="flex:1">
+    <h2>Agent reasoning</h2>
+    <div id="log"><div class="entry">Set the time, then hit <b>Plan my run</b>. The agent checks every leg against the closures active <i>when you'll actually be driving it</i>.</div></div>
+  </section>
+
+  <section>
+    <h2>The four questions</h2>
+    <div class="lens">
+      <details open><summary><b>1 · Customer Journey</b></summary>A gig delivery driver still has orders to deliver when a parade or live event closes part of the city. We fit at two moments: deciding whether to <b>accept an order</b>, and choosing <b>how to drive each leg</b>.</details>
+      <details open><summary><b>2 · Distribution</b></summary>Platforms and drivers pick us whenever an event disrupts the city: we know <b>which streets close at what time</b> and <b>where drivers can still cross</b>, which standard routing can't see. The platform adds us to its driver tools, so we don't win drivers one by one.</details>
+      <details open><summary><b>3 · Value</b></summary><b>Platform:</b> fewer late orders, refunds, cancellations and lost subscribers. <b>Driver:</b> higher real $/hr, fewer bad orders. <b>Restaurant &amp; customer:</b> food arrives on time and hot. <b>City:</b> fewer cars pushing into closed streets. Next: drivers report closures to keep the map current.</details>
+      <details open><summary><b>4 · Control</b></summary><b>Lean into:</b> the platform's existing model. We suggest routes, stop order and which orders to take, without changing how orders are assigned. <b>Safeguard:</b> never route into a closure, the driver approves every change, customer messages need a tap, pickups stay before drop-offs.</details>
+    </div>
+  </section>
+</div>
+
+<div style="position:relative">
+  <div id="map"></div>
+  <div id="err" style="z-index:50"></div>
+  <div class="legend">
+    <div><span style="background:#d9534f"></span>Closed now</div>
+    <div><span style="background:#bbb"></span>Reopened / not yet closed</div>
+    <div><span style="background:#1a73e8"></span>Agent route</div>
+    <div>🚶 Pedestrian crossover (illustrative)</div>
+  </div>
+</div>
+
+<script>
+/* ---------- Parade model (approximate route, illustrative timings) ----------
+   Head of parade steps off ~8:30 at W 77th & CPW, reaches Herald Sq ~9:30, ends ~noon.
+   Each segment: barricades go up ~2.5h before the head arrives, reopen ~3h after it passes. */
+const SEGMENTS = [
+  {name:"Staging · W 77th–81st St (CPW)", path:[[40.7822,-73.9713],[40.7794,-73.9733]], head:8.0},
+  {name:"Central Park West (77th → Columbus Circle)", path:[[40.7794,-73.9733],[40.7713,-73.9792],[40.7685,-73.9813]], head:8.5},
+  {name:"Central Park South (CPW → 6th Ave)", path:[[40.7685,-73.9813],[40.7672,-73.9790],[40.7655,-73.9763]], head:8.75},
+  {name:"6th Ave (59th → 42nd St)", path:[[40.7655,-73.9763],[40.7601,-73.9802],[40.7547,-73.9842]], head:9.0},
+  {name:"6th Ave (42nd → 34th St)", path:[[40.7547,-73.9842],[40.7496,-73.9877]], head:9.25},
+  {name:"W 34th St · Herald Sq finale", path:[[40.7496,-73.9877],[40.7503,-73.9893],[40.7510,-73.9905]], head:9.5},
+];
+SEGMENTS.forEach(s=>{ s.close = s.head-2.5; s.open = s.head+3.0; });
+
+const CROSSINGS = [ // illustrative pedestrian crossover points
+  {pos:[40.7735,-73.9776], name:"W 72nd St crossover"},
+  {pos:[40.7580,-73.9817], name:"W 47th St crossover"},
+  {pos:[40.7518,-73.9860], name:"W 38th St crossover"},
+];
+const BYPASSES = [
+  {name:"South bypass via 31st St", via:[40.7474,-73.9905]},
+  {name:"North bypass via 86th St Transverse", via:[40.7850,-73.9686]},
+];
+
+// Stops in the order the delivery app handed them over: zig-zags across the parade
+let stops = [
+  {label:"You · Hell's Kitchen (10th Ave & W 50th)", pos:[40.7653,-73.9915], start:true},
+  {label:"Order #4821 · Murray Hill (Lex & E 36th)", pos:[40.7478,-73.9791]},
+  {label:"Order #4824 · Upper West Side (Amsterdam & W 70th)", pos:[40.7772,-73.9838]},
+  {label:"Order #4829 · Midtown East (3rd Ave & E 45th)", pos:[40.7523,-73.9724]},
+  {label:"Order #4831 · Chelsea (8th Ave & W 23rd)", pos:[40.7458,-73.9993]},
+];
+
+const OFFERS = [
+  {store:"Joe's Pizza · Broadway & W 40th", pick:[40.7547,-73.9872], drop:"E 39th & 2nd Ave", dropPos:[40.7471,-73.9737], pay:9.50},
+  {store:"Sweetgreen · W 56th & 8th Ave", pick:[40.7659,-73.9831], drop:"E 61st & Park Ave", dropPos:[40.7646,-73.9675], pay:11.25},
+  {store:"Levain · W 74th & Amsterdam", pick:[40.7800,-73.9805], drop:"W 66th & Columbus", dropPos:[40.7737,-73.9820], pay:7.75},
+];
+let offerIdx = 0;
+
+let map, dirService, segLines=[], routeRenderers=[], stopMarkers=[], tMin=570, car=null, carTimer=null, fullPath=[];
+const $ = id=>document.getElementById(id);
+const fmt = m=>{m=Math.round(m); const h=Math.floor(m/60), mm=String(m%60).padStart(2,"0"); return `${h>12?h-12:h}:${mm}${h>=12?"pm":"am"}`;};
+const LL = p=>new google.maps.LatLng(p[0],p[1]);
+const activeAt = (seg, minutes)=> minutes/60 >= seg.close && minutes/60 < seg.open;
+const short = s=>s.label.split(" · ")[0];
+
+function init(){
+  map = new google.maps.Map($("map"), {center:{lat:40.7620,lng:-73.9800}, zoom:14, mapTypeControl:false, streetViewControl:false, clickableIcons:false,
+    styles:[{featureType:"poi",stylers:[{visibility:"off"}]},{featureType:"transit",stylers:[{visibility:"simplified"}]}]});
+  dirService = new google.maps.DirectionsService();
+
+  SEGMENTS.forEach(s=>{
+    const line = new google.maps.Polyline({path:s.path.map(LL), map, strokeWeight:9, strokeOpacity:.85, zIndex:5});
+    const iw = new google.maps.InfoWindow();
+    line.addListener("click", e=>{ iw.setContent(`<b>${s.name}</b><br>Closed ${fmt(s.close*60)} – ${fmt(s.open*60)}`); iw.setPosition(e.latLng); iw.open(map); });
+    segLines.push(line);
+  });
+  CROSSINGS.forEach(c=> new google.maps.Marker({position:LL(c.pos), map, label:{text:"🚶",fontSize:"16px"}, icon:{path:google.maps.SymbolPath.CIRCLE, scale:0}, title:c.name}));
+
+  map.addListener("click", e=>{
+    stops.push({label:`Order #49${10+stops.length} · dropped pin`, pos:[e.latLng.lat(), e.latLng.lng()]});
+    renderStops();
+  });
+  $("slider").addEventListener("input", e=>{ tMin=+e.target.value; paintClosures(); });
+  $("run").addEventListener("click", planRun);
+  $("offerBtn").addEventListener("click", evaluateOffer);
+  renderStops(); paintClosures();
+}
+
+function paintClosures(){
+  $("clock").textContent = fmt(tMin);
+  let closed = 0;
+  SEGMENTS.forEach((s,i)=>{ const a = activeAt(s,tMin); if(a) closed++; segLines[i].setOptions({strokeColor:a?"#d9534f":"#bbbbbb", strokeOpacity:a?.85:.5}); });
+  $("status").textContent = closed ? `${closed}/${SEGMENTS.length} parade segments closed to cars right now` : "No parade closures right now";
+}
+
+function renderStops(){
+  stopMarkers.forEach(m=>m.setMap(null)); stopMarkers=[];
+  $("count").textContent = `${stops.length-1} stops`;
+  $("stops").innerHTML = stops.map((s,i)=>`<div class="stop"><span class="pin ${s.start?"start":""}" style="${s.pickup?"background:#7b4bd6":""}">${s.start?"▶":i}</span><div>${s.label}<small>${s.pickup?"Pickup · must come before its drop-off":s.dropOf?"Drop-off for new offer":""}</small></div>${s.start?"":`<button class="x" data-i="${i}">✕</button>`}</div>`).join("");
+  document.querySelectorAll(".x").forEach(b=>b.onclick=()=>{
+    const s = stops[+b.dataset.i];
+    stops = stops.filter(x=>x!==s && !(s.pickup && x.dropOf===s.id) && !(s.dropOf && x.id===s.dropOf));
+    renderStops();
+  });
+  stops.forEach((s,i)=> stopMarkers.push(new google.maps.Marker({position:LL(s.pos), map, zIndex:10, label:{text:s.start?"▶":String(i),color:"#fff",fontWeight:"700"}, icon:{path:google.maps.SymbolPath.CIRCLE, scale:12, fillColor:s.start?"#1f9d55":s.pickup?"#7b4bd6":"#1d1d1f", fillOpacity:1, strokeColor:"#fff", strokeWeight:2}})));
+}
+
+/* ---------- Geometry ---------- */
+function segIntersect(p1,p2,p3,p4){
+  const d=(a,b,c)=>(c.lng()-a.lng())*(b.lat()-a.lat())-(b.lng()-a.lng())*(c.lat()-a.lat());
+  const d1=d(p3,p4,p1), d2=d(p3,p4,p2), d3=d(p1,p2,p3), d4=d(p1,p2,p4);
+  return ((d1>0&&d2<0)||(d1<0&&d2>0)) && ((d3>0&&d4<0)||(d3<0&&d4>0));
+}
+function conflicts(path, minutes){
+  const hits=[];
+  SEGMENTS.forEach((s,i)=>{
+    if(!activeAt(s,minutes)) return;
+    const sp = s.path.map(LL); let hit=false;
+    for(let k=0;k<path.length && !hit;k++){
+      if(google.maps.geometry.poly.isLocationOnEdge(path[k], segLines[i], 0.00035)) hit=true;
+      if(k>0) for(let j=1;j<sp.length && !hit;j++) if(segIntersect(path[k-1],path[k],sp[j-1],sp[j])) hit=true;
+    }
+    if(hit) hits.push(s);
+  });
+  return hits;
+}
+const kmBetween = (a,b)=>{const dx=(a[1]-b[1])*84.3, dy=(a[0]-b[0])*111; return Math.hypot(dx,dy);};
+
+/* ---------- Reordering: brute force over permutations, cost = est. minutes + parade-crossing penalty ---------- */
+function crossesAt(a,b,minutes){ return conflicts([LL(a),LL(b)], minutes).length>0; }
+function seqCost(seq){
+  let t=tMin, cost=0, crossings=0;
+  for(let i=1;i<seq.length;i++){
+    let leg = kmBetween(seq[i-1].pos, seq[i].pos)*1.35/12*60 + 3; // manhattan-ish, ~12 km/h midtown
+    if(crossesAt(seq[i-1].pos, seq[i].pos, t)){ leg += 22; crossings++; } // detour around a closure
+    cost += leg; t += leg + 4;
+  }
+  return {cost, crossings};
+}
+function valid(seq){ const seen=new Set(); for(const s of seq){ if(s.dropOf && !seen.has(s.dropOf)) return false; if(s.id) seen.add(s.id);} return true; }
+function permute(arr){ if(arr.length<=1) return [arr]; const out=[]; arr.forEach((x,i)=>permute([...arr.slice(0,i),...arr.slice(i+1)]).forEach(p=>out.push([x,...p]))); return out; }
+function bestOrder(){
+  const [start,...rest] = stops;
+  if(rest.length>7) return null;
+  let best=null;
+  for(const p of permute(rest)){ const seq=[start,...p]; if(!valid(seq)) continue; const c=seqCost(seq); if(!best||c.cost<best.cost) best={seq,...c}; }
+  return best;
+}
+
+/* ---------- Routing one leg with closure awareness ---------- */
+function route(origin, dest, via){
+  return new Promise((res,rej)=> dirService.route({
+    origin:LL(origin), destination:LL(dest), travelMode:"DRIVING",
+    provideRouteAlternatives: !via, waypoints: via?[{location:LL(via), stopover:false}]:[],
+  }, (r,st)=> st==="OK"?res(r):rej(st)));
+}
+const legDur = rt=> rt.legs.reduce((a,l)=>a+l.duration.value,0);
+
+let SIM=false;
+function simRoute(pts){ const path=pts.map(LL); let km=0; for(let i=1;i<pts.length;i++) km+=kmBetween(pts[i-1],pts[i])*1.35; return {overview_path:path, legs:[{duration:{value:Math.round(km/12*3600)+180}}]}; }
+function simLeg(from,to,clock){
+  const base = simRoute([from,to]); const fastest={res:null, idx:0, rt:base, dur:legDur(base), hits:conflicts(base.overview_path,clock)};
+  if(!fastest.hits.length) return {...fastest, kind:"CLEAR", fastest};
+  const tries = BYPASSES.map(b=>{const rt=simRoute([from,b.via,to]); return {res:null, idx:0, rt, dur:legDur(rt), hits:conflicts(rt.overview_path,clock), bypass:b};});
+  const ok = tries.filter(t=>!t.hits.length).sort((a,b)=>a.dur-b.dur)[0];
+  if(ok) return {...ok, kind:"BYPASS", fastest, nAlt:1};
+  return {...fastest, kind:"WALK", fastest, reopen:Math.min(...fastest.hits.map(h=>h.open))*60};
+}
+async function bestLeg(from, to, clock){
+  if(SIM) return simLeg(from,to,clock);
+  let r;
+  try{ r = await route(from, to); }
+  catch(err){ SIM=true; showErr(`Google Directions refused the request (<b>${err}</b>), so the demo is running in <b>simulated routing</b> mode. To fix this, enable the Directions API for this key in Google Cloud Console.`); return simLeg(from,to,clock); }
+  const opts = r.routes.map((rt,idx)=>({res:r, idx, rt, dur:legDur(rt), hits:conflicts(rt.overview_path, clock)}));
+  const fastest = opts.reduce((a,b)=>a.dur<b.dur?a:b);
+  if(!fastest.hits.length) return {...fastest, kind:"CLEAR", fastest};
+  const clean = opts.filter(o=>!o.hits.length).sort((a,b)=>a.dur-b.dur)[0];
+  if(clean) return {...clean, kind:"REROUTE", fastest};
+  const tries=[];
+  for(const b of BYPASSES){ try{ const rb=await route(from,to,b.via); const rt=rb.routes[0]; tries.push({res:rb, idx:0, rt, dur:legDur(rt), hits:conflicts(rt.overview_path, clock), bypass:b}); }catch(e){} }
+  const ok = tries.filter(t=>!t.hits.length).sort((a,b)=>a.dur-b.dur)[0];
+  if(ok) return {...ok, kind:"BYPASS", fastest, nAlt:opts.length};
+  return {...fastest, kind:"WALK", fastest, reopen:Math.min(...fastest.hits.map(h=>h.open))*60};
+}
+
+/* ---------- UI helpers ---------- */
+function log(html, cls=""){ const d=document.createElement("div"); d.className="entry "+cls; d.innerHTML=html; $("log").appendChild(d); d.scrollIntoView({block:"nearest",behavior:"smooth"}); return d; }
+function ask(entry, yesText, noText){
+  return new Promise(res=>{
+    const box=document.createElement("div"); box.className="approve";
+    box.innerHTML=`<button class="yes">${yesText}</button><button>${noText}</button>`;
+    box.children[0].onclick=()=>{box.innerHTML=`<i style="font-size:11.5px;color:var(--mute)">✓ ${yesText}</i>`; res(true);};
+    box.children[1].onclick=()=>{box.innerHTML=`<i style="font-size:11.5px;color:var(--mute)">${noText}</i>`; res(false);};
+    entry.appendChild(box);
+  });
+}
+function clearRoutes(){ routeRenderers.forEach(r=>r.setMap(null)); routeRenderers=[]; fullPath=[]; if(carTimer) clearInterval(carTimer); if(car) car.setMap(null); }
+function drawLeg(leg){
+  const dashed = leg.kind==="WALK";
+  if(!leg.res){ routeRenderers.push(new google.maps.Polyline({map, path:leg.rt.overview_path, zIndex:8, strokeColor:dashed?"#d9534f":"#1a73e8", strokeWeight:5, strokeOpacity:dashed?0:.85, icons:dashed?[{icon:{path:"M 0,-1 0,1",strokeOpacity:1,scale:3},offset:"0",repeat:"14px"}]:[]})); fullPath.push(...leg.rt.overview_path); return; }
+  routeRenderers.push(new google.maps.DirectionsRenderer({map, directions:leg.res, routeIndex:leg.idx, suppressMarkers:true, preserveViewport:true,
+    polylineOptions: dashed ? {strokeColor:"#d9534f", strokeOpacity:0, icons:[{icon:{path:"M 0,-1 0,1",strokeOpacity:1,scale:3},offset:"0",repeat:"14px"}]} : {strokeColor:"#1a73e8", strokeWeight:5, strokeOpacity:.85}}));
+  fullPath.push(...leg.rt.overview_path);
+}
+function animateCar(){
+  if(!fullPath.length) return;
+  car = new google.maps.Marker({map, position:fullPath[0], zIndex:20, label:{text:"🚗",fontSize:"22px"}, icon:{path:google.maps.SymbolPath.CIRCLE, scale:0}});
+  let i=0; carTimer=setInterval(()=>{ i++; if(i>=fullPath.length){clearInterval(carTimer);return;} car.setPosition(fullPath[i]); }, 60);
+}
+function legText(i, to, leg){
+  const extra = Math.max(0, Math.round((leg.dur-leg.fastest.dur)/60));
+  switch(leg.kind){
+    case "CLEAR": return `<span class="tag" style="background:var(--ok)">CLEAR</span> Leg ${i} → <b>${short(to)}</b>: fastest route avoids all active closures.`;
+    case "REROUTE": return `<span class="tag" style="background:var(--warn)">REROUTE</span> Leg ${i} → <b>${short(to)}</b>: fastest route hits <b>${leg.fastest.hits[0].name}</b> (closed until ${fmt(leg.fastest.hits[0].open*60)}). Taking an alternative, <b>+${extra} min</b>.`;
+    case "BYPASS": return `<span class="tag" style="background:var(--warn)">BYPASS</span> Leg ${i} → <b>${short(to)}</b>: all ${leg.nAlt} Google alternatives hit <b>${leg.fastest.hits.map(h=>h.name).join(", ")}</b>. Forcing the <b>${leg.bypass.name}</b>, <b>+${extra} min</b>.`;
+    default: { const c = CROSSINGS.map(c=>({...c,d:kmBetween(c.pos,to.pos)})).sort((a,b)=>a.d-b.d)[0];
+      return `<span class="tag" style="background:var(--red)">PARK &amp; WALK</span> Leg ${i} → <b>${short(to)}</b>: no drivable way across until ${fmt(leg.reopen)}. Park west of the route and walk the order over at <b>${c.name}</b>, or hold this drop until ${fmt(leg.reopen)}.`; }
+  }
+}
+function showErr(h){ $("err").innerHTML=h; $("err").style.display="block"; }
+window.addEventListener("error", e=>showErr("Script error: "+e.message));
+setTimeout(()=>{ if(!window.google||!window.google.maps) showErr("Google Maps didn't load. If you're viewing this inside Claude's file preview, <b>download the file and open it in Chrome</b>; the preview blocks outside scripts. Otherwise check your internet connection and the API key."); }, 5000);
+window.gm_authFailure = ()=>showErr("Google Maps rejected the API key. Check that the <b>Maps JavaScript API</b> is enabled and this page's URL is allowed by the key's restrictions.");
+
+/* ---------- Agent: plan the run ---------- */
+async function planRun(){
+  $("run").disabled = $("offerBtn").disabled = true; $("log").innerHTML=""; clearRoutes();
+  log(`<span class="tag">START</span> ${fmt(tMin)} · ${stops.length-1} stops in the app's order. ${$("status").textContent}.`);
+
+  if($("reorder").checked && stops.length>2){
+    const orig = seqCost(stops), best = bestOrder();
+    if(best && best.cost < orig.cost-2){
+      const e = log(`<span class="tag" style="background:#7b4bd6">REORDER</span> The app's order crosses the parade <b>${orig.crossings}×</b> (~${Math.round(orig.cost)} min). Suggested order crosses <b>${best.crossings}×</b> (~${Math.round(best.cost)} min), saving <b>~${Math.round(orig.cost-best.cost)} min</b>:<br>${best.seq.slice(1).map(short).join(" → ")}`, "warn");
+      if(await ask(e, "Use suggested order", "Keep app's order")){ stops = best.seq; renderStops(); }
+    } else log(`<span class="tag" style="background:#7b4bd6">REORDER</span> Current order is already the best one around the parade.`);
+  }
+
+  try{
+    let clock = tMin, detour = 0;
+    for(let i=1;i<stops.length;i++){
+      const leg = await bestLeg(stops[i-1].pos, stops[i].pos, clock);
+      const e = log(legText(i, stops[i], leg), {CLEAR:"ok",WALK:"bad"}[leg.kind]||"warn");
+      drawLeg(leg);
+      detour += Math.max(0, leg.dur-leg.fastest.dur);
+      clock += leg.dur/60;
+      e.innerHTML += ` ETA <b>${fmt(clock)}</b>.`;
+      if(leg.kind!=="CLEAR" && !stops[i].pickup){
+        const box=document.createElement("div"); box.className="approve";
+        box.innerHTML=`<button>✉ Text customer: "Parade detour, arriving ~${fmt(clock)}"</button>`;
+        box.children[0].onclick=()=>{box.innerHTML=`<i style="font-size:11.5px;color:var(--mute)">✓ ETA sent</i>`;};
+        e.appendChild(box);
+      }
+      clock += 4;
+    }
+    log(`<span class="tag">DONE</span> Run done ~<b>${fmt(clock)}</b>. Detours caused by the parade: <b>${Math.round(detour/60)} min</b>. Nothing changed or sent without your tap.`);
+    animateCar();
+  }catch(err){
+    showErr(`Directions request failed (${err}). Enable the <b>Directions API</b> for this key in Google Cloud Console, and check the key's restrictions allow this page.`);
+    log(`Couldn't reach Google Directions (${err}).`, "bad");
+  }
+  $("run").disabled = $("offerBtn").disabled = false;
+}
+
+/* ---------- Agent: should I take this offer? ---------- */
+async function evaluateOffer(){
+  const o = OFFERS[offerIdx++ % OFFERS.length];
+  $("run").disabled = $("offerBtn").disabled = true;
+  const here = stops[0].pos, target = +$("target").value || 25;
+  const e0 = log(`<span class="tag" style="background:#7b4bd6">OFFER</span> 📲 <b>$${o.pay.toFixed(2)}</b> · ${o.store} → ${o.drop}. Checking the parade…`);
+  try{
+    const a = await bestLeg(here, o.pick, tMin);
+    const b = await bestLeg(o.pick, o.dropPos, tMin + a.dur/60 + 5);
+    const mins = (a.dur+b.dur)/60 + 9; // + pickup wait & handoff
+    const naive = (a.fastest.dur+b.fastest.dur)/60 + 9;
+    const rate = o.pay/(mins/60);
+    const walk = a.kind==="WALK"||b.kind==="WALK";
+    const good = !walk && rate >= target;
+    const why = walk ? `this order needs a <b>walk across the parade</b> (no drivable way until ${fmt((a.kind==="WALK"?a:b).reopen)})`
+      : `the parade adds <b>${Math.round(mins-naive)} min</b>, so the order takes <b>~${Math.round(mins)} min</b> → <b>$${rate.toFixed(0)}/hr</b> against your $${target}/hr target`;
+    const e = log(`<span class="tag" style="background:${good?"var(--ok)":"var(--red)"}">${good?"TAKE IT":"SKIP IT"}</span> The app quotes ~${Math.round(naive)} min, but ${why}.`, good?"ok":"bad");
+    if(await ask(e, "Accept offer", "Decline")){
+      const id = "o"+Date.now();
+      stops.push({label:`Pickup · ${o.store}`, pos:o.pick, pickup:true, id});
+      stops.push({label:`Drop · ${o.drop}`, pos:o.dropPos, dropOf:id});
+      renderStops();
+      log(`Added to your run. Hit <b>Plan my run</b> to fit it in.`);
+    }
+  }catch(err){ showErr(`Directions request failed (${err}). Enable the <b>Directions API</b> for this key.`); }
+  $("run").disabled = $("offerBtn").disabled = false;
+}
+</script>
+<script>
+(function(){
+  const q = new URLSearchParams(location.search).get("key");
+  let key = q; try{ if(q) localStorage.setItem("gmapsKey",q); key = key || localStorage.getItem("gmapsKey"); }catch(e){}
+  if(!key){ key = prompt("Paste your Google Maps API key (kept only in this browser):"); try{ if(key) localStorage.setItem("gmapsKey",key);}catch(e){} }
+  if(!key){ showErr("No Google Maps API key. Reload the page and paste your key, or add ?key=YOUR_KEY to the URL."); return; }
+  const sc=document.createElement("script"); sc.async=true;
+  sc.src="https://maps.googleapis.com/maps/api/js?key="+encodeURIComponent(key)+"&libraries=geometry&callback=init";
+  document.head.appendChild(sc);
+})();
+</script>
+</body>
+</html>
